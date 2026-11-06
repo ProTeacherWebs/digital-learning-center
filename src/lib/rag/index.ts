@@ -1,18 +1,26 @@
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { GoogleGenAI } from "@google/genai";
 import { LocalFolderSource, type DocumentSource } from "./source";
 
 const EMBEDDING_MODEL = "gemini-embedding-001";
-const CHUNK_SIZE = 800;
-const CHUNK_OVERLAP = 120;
+const EMBEDDING_DIMENSIONS = 768;
+const CHUNK_SIZE = 1200;
+const CHUNK_OVERLAP = 150;
 const EMBED_BATCH = 50;
 const INDEX_FILE = path.join(process.cwd(), ".rag-index.json");
 
-type Chunk = { source: string; title: string; text: string; vector: number[] };
-type StoredIndex = { versions: Record<string, string>; chunks: Chunk[] };
+type Chunk = {
+  source: string;
+  title: string;
+  text: string;
+  vector: number[];
+};
+type PendingChunk = Omit<Chunk, "vector">;
 
 export type Hit = { source: string; title: string; text: string; score: number };
+export type SearchResult = { hits: Hit[]; indexing: boolean };
 
 /** The knowledge source. Swap for a Google Drive source here once it exists. */
 const source: DocumentSource = new LocalFolderSource(
@@ -35,6 +43,7 @@ export function chunkText(text: string): string[] {
     if (end < clean.length) {
       const breakAt = Math.max(
         clean.lastIndexOf("\n\n", end),
+        clean.lastIndexOf("\n", end),
         clean.lastIndexOf(". ", end),
       );
       if (breakAt > start + CHUNK_SIZE / 2) end = breakAt + 1;
@@ -47,56 +56,94 @@ export function chunkText(text: string): string[] {
   return chunks;
 }
 
-async function embed(texts: string[], taskType: string): Promise<number[][]> {
-  const vectors: number[][] = [];
-  for (let i = 0; i < texts.length; i += EMBED_BATCH) {
-    const res = await gemini().models.embedContent({
-      model: EMBEDDING_MODEL,
-      contents: texts.slice(i, i + EMBED_BATCH),
-      config: { taskType },
-    });
-    for (const e of res.embeddings ?? []) vectors.push(e.values ?? []);
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** The free tier allows ~100 embedded texts a minute; on a 429 wait the time Gemini asks for. */
+async function embed(texts: string[], taskType: string, maxRetries = 30): Promise<number[][]> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await gemini().models.embedContent({
+        model: EMBEDDING_MODEL,
+        contents: texts,
+        config: { taskType, outputDimensionality: EMBEDDING_DIMENSIONS },
+      });
+      return (res.embeddings ?? []).map((e) => e.values ?? []);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const rateLimited = /\b429\b|RESOURCE_EXHAUSTED/.test(message);
+      if (!rateLimited || attempt >= maxRetries) throw error;
+      const asked = Number(/retry in ([\d.]+)s/i.exec(message)?.[1]);
+      await sleep((Number.isFinite(asked) ? Math.ceil(asked) + 2 : 60) * 1000);
+    }
   }
-  return vectors;
 }
 
-async function loadStored(): Promise<StoredIndex> {
+async function loadStored(): Promise<Chunk[]> {
   try {
     return JSON.parse(await fs.readFile(INDEX_FILE, "utf8"));
   } catch {
-    return { versions: {}, chunks: [] };
+    return [];
   }
 }
 
-/** Re-embeds only documents whose version changed, drops documents that disappeared. */
-async function sync(): Promise<StoredIndex> {
+const save = (chunks: Chunk[]) => fs.writeFile(INDEX_FILE, JSON.stringify(chunks));
+/** A chunk is identified by its text, so an edited document only re-embeds the chunks that changed. */
+const keyOf = (c: PendingChunk) =>
+  `${c.source}|${createHash("sha1").update(c.text).digest("hex")}`;
+
+let current: Chunk[] | null = null;
+let job: Promise<void> | null = null;
+
+/** Compares the source with the stored index and embeds what is missing, saving after every batch. */
+async function reconcile() {
   const docs = await source.list();
-  const stored = await loadStored();
-
-  const current = new Map(docs.map((d) => [d.id, d]));
-  const unchanged = (id: string) =>
-    current.get(id)?.version === stored.versions[id];
-
-  const kept = stored.chunks.filter((c) => unchanged(c.source));
-  const fresh = docs.filter((d) => !unchanged(d.id));
-  if (fresh.length === 0 && kept.length === stored.chunks.length) return stored;
-
-  const pending = fresh.flatMap((d) =>
+  const wanted: PendingChunk[] = docs.flatMap((d) =>
     chunkText(d.text).map((text) => ({ source: d.id, title: d.title, text })),
   );
-  const vectors = pending.length
-    ? await embed(
-        pending.map((p) => p.text),
-        "RETRIEVAL_DOCUMENT",
-      )
-    : [];
+  const wantedKeys = new Set(wanted.map(keyOf));
+  const stored = current ?? (await loadStored());
+  const kept = stored.filter((c) => wantedKeys.has(keyOf(c)));
+  const have = new Set(kept.map(keyOf));
+  const pending = wanted.filter((w) => !have.has(keyOf(w)));
 
-  const next: StoredIndex = {
-    versions: Object.fromEntries(docs.map((d) => [d.id, d.version])),
-    chunks: [...kept, ...pending.map((p, i) => ({ ...p, vector: vectors[i] }))],
-  };
-  await fs.writeFile(INDEX_FILE, JSON.stringify(next));
-  return next;
+  current = kept;
+  if (kept.length !== stored.length) await save(kept);
+  if (pending.length === 0) return 0;
+
+  job = (async () => {
+    for (let at = 0; at < pending.length; at += EMBED_BATCH) {
+      const batch = pending.slice(at, at + EMBED_BATCH);
+      const vectors = await embed(
+        batch.map((b) => b.text),
+        "RETRIEVAL_DOCUMENT",
+      );
+      current = [...(current ?? []), ...batch.map((b, n) => ({ ...b, vector: vectors[n] }))];
+      await save(current);
+      console.log(`[rag] indexed ${Math.min(at + EMBED_BATCH, pending.length)}/${pending.length}`);
+    }
+  })()
+    .catch((error) => console.error("[rag] indexing failed", error))
+    .finally(() => {
+      job = null;
+    });
+  return pending.length;
+}
+
+/**
+ * Picks up added, edited and removed documents on every call. A small change is embedded before
+ * answering, so new text is searchable at once; a large one continues in the background.
+ */
+async function refresh() {
+  if (job) return;
+  const pending = await reconcile();
+  if (pending <= EMBED_BATCH) await job;
+}
+
+/** Builds the whole index and waits for it; used by `npm run index`. */
+export async function buildIndex() {
+  await refresh();
+  await job;
+  return current?.length ?? 0;
 }
 
 function cosine(a: number[], b: number[]) {
@@ -111,11 +158,13 @@ function cosine(a: number[], b: number[]) {
   return dot / (Math.sqrt(na) * Math.sqrt(nb) || 1);
 }
 
-export async function search(query: string, topK = 5): Promise<Hit[]> {
-  const index = await sync();
-  if (index.chunks.length === 0) return [];
-  const [queryVector] = await embed([query], "RETRIEVAL_QUERY");
-  return index.chunks
+/** Searches what is indexed so far; new or changed documents are embedded in the background. */
+export async function search(query: string, topK = 5): Promise<SearchResult> {
+  await refresh();
+  const chunks = current ?? [];
+  if (chunks.length === 0) return { hits: [], indexing: job !== null };
+  const [queryVector] = await embed([query], "RETRIEVAL_QUERY", 3);
+  const hits = chunks
     .map((c) => ({
       source: c.source,
       title: c.title,
@@ -124,4 +173,5 @@ export async function search(query: string, topK = 5): Promise<Hit[]> {
     }))
     .sort((a, b) => b.score - a.score)
     .slice(0, topK);
+  return { hits, indexing: job !== null };
 }

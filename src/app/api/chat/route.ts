@@ -6,7 +6,8 @@ const MIN_SCORE = 0.55;
 const SYSTEM = `Ты ассистент учебного центра «Цифра» (курсы по маркетингу, дизайну, разработке, аналитике данных и AI).
 Отвечай по-русски, коротко и по делу, только на основе приведённых фрагментов документов центра.
 Если во фрагментах нет ответа, честно скажи, что такой информации у тебя нет, и предложи оставить заявку на сайте.
-Ничего не выдумывай: ни цены, ни даты, ни условия.`;
+Ничего не выдумывай: ни цены, ни даты, ни условия.
+Не упоминай источники, названия файлов и номера фрагментов.`;
 
 type Message = { role: "user" | "assistant"; text: string };
 
@@ -27,17 +28,23 @@ export async function POST(request: Request) {
   }
 
   try {
-    const hits: Hit[] = (await search(question)).filter((h) => h.score >= MIN_SCORE);
+    const { hits: found, indexing } = await search(question);
+    const hits: Hit[] = found.filter((h) => h.score >= MIN_SCORE);
+    if (found.length === 0 && indexing) {
+      return json({
+        answer:
+          "Я ещё читаю документы центра, это займёт несколько минут. Повторите вопрос чуть позже.",
+      });
+    }
     if (hits.length === 0) {
       return json({
         answer:
           "В документах центра я не нашёл ответа на этот вопрос. Оставьте заявку на сайте, менеджер ответит лично.",
-        sources: [],
       });
     }
 
     const context = hits
-      .map((h, i) => `[${i + 1}] (${h.title})\n${h.text}`)
+      .map((h, i) => `[${i + 1}]\n${h.text}`)
       .join("\n\n");
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const response = await ai.models.generateContent({
@@ -55,12 +62,13 @@ export async function POST(request: Request) {
       ],
     });
 
-    return json({
-      answer: response.text ?? "",
-      sources: [...new Set(hits.map((h) => h.title))],
-    });
+    return json({ answer: response.text ?? "" });
   } catch (error) {
     console.error("chat failed", error);
+    const message = error instanceof Error ? error.message : "";
+    if (/\b429\b|RESOURCE_EXHAUSTED/.test(message)) {
+      return json({ error: "Превышен лимит запросов Gemini. Подождите минуту и повторите." }, 429);
+    }
     return json({ error: "Не удалось получить ответ. Попробуйте ещё раз позже." }, 500);
   }
 }

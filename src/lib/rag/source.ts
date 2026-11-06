@@ -78,26 +78,37 @@ const BINARY_READERS: Record<string, (file: string) => Promise<string>> = {
 export class LocalFolderSource implements DocumentSource {
   readonly name = "local-folder";
 
+  /** Parsed files by path, so an unchanged file costs one stat() per call instead of a re-parse. */
+  private readonly parsed = new Map<string, SourceDocument>();
+
   constructor(private readonly root: string) {}
 
   async list(): Promise<SourceDocument[]> {
     const docs: SourceDocument[] = [];
     for await (const file of walk(this.root)) {
+      const name = path.basename(file);
       const ext = path.extname(file).toLowerCase();
       const isText = TEXT_EXTENSIONS.has(ext);
       const readBinary = BINARY_READERS[ext];
       if (!isText && !readBinary) continue;
-      if (path.basename(file).toLowerCase() === "readme.md") continue;
+      // README, and the lock files Word and Excel keep next to an open document.
+      if (name.toLowerCase() === "readme.md" || name.startsWith("~$") || name.startsWith(".")) continue;
 
-      const stat = await fs.stat(file);
-      const text = isText ? await fs.readFile(file, "utf8") : await readBinary(file);
-      const id = path.relative(this.root, file).split(path.sep).join("/");
-      docs.push({
-        id,
-        title: id,
-        text,
-        version: `${stat.mtimeMs}-${stat.size}`,
-      });
+      try {
+        const stat = await fs.stat(file);
+        const version = `${stat.mtimeMs}-${stat.size}`;
+        let doc = this.parsed.get(file);
+        if (doc?.version !== version) {
+          const text = isText ? await fs.readFile(file, "utf8") : await readBinary(file);
+          const id = path.relative(this.root, file).split(path.sep).join("/");
+          doc = { id, title: id, text, version };
+          this.parsed.set(file, doc);
+        }
+        docs.push(doc);
+      } catch (error) {
+        // A file caught mid-save is picked up on the next call.
+        console.warn(`[rag] skipped ${name}:`, error instanceof Error ? error.message : error);
+      }
     }
     return docs;
   }

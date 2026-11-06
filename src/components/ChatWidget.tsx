@@ -6,7 +6,6 @@ import { OPEN_CHAT } from "./chat-events";
 type Message = {
   role: "user" | "assistant";
   text: string;
-  sources?: string[];
   error?: boolean;
 };
 
@@ -46,7 +45,7 @@ export default function ChatWidget() {
       setMessages((prev) => [
         ...prev,
         res.ok
-          ? { role: "assistant", text: data.answer, sources: data.sources }
+          ? { role: "assistant", text: data.answer }
           : { role: "assistant", text: data.error ?? "Что-то пошло не так.", error: true },
       ]);
     } catch {
@@ -110,9 +109,6 @@ export default function ChatWidget() {
         {messages.map((m, i) => (
           <div key={i} className={`msg ${m.role}${m.error ? " error" : ""}`}>
             {m.text}
-            {m.sources && m.sources.length > 0 && (
-              <span className="sources">Источники: {m.sources.join(", ")}</span>
-            )}
           </div>
         ))}
         {busy && <div className="msg assistant">Ищу в документах…</div>}

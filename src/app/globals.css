@@ -761,13 +761,6 @@ details[open] .plus::after {
   background: var(--field-5);
 }
 
-.msg .sources {
-  display: block;
-  margin-top: 8px;
-  font-size: var(--step-small);
-  font-weight: 600;
-}
-
 .chat-form {
   display: flex;
   gap: 8px;
