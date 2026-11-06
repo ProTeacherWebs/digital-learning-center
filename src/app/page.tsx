@@ -1,15 +1,9 @@
+import { Suspense } from "react";
 import AskForm from "@/components/AskForm";
+import Catalog from "@/components/Catalog";
 import ChatWidget from "@/components/ChatWidget";
-import CourseAsk from "@/components/CourseAsk";
 import Header from "@/components/Header";
-import Motion from "@/components/Motion";
-import OpenChat from "@/components/OpenChat";
-import {
-  directions,
-  formatPrice,
-  pluralize,
-  shortestMonths,
-} from "@/data/courses";
+import SiteFooter from "@/components/SiteFooter";
 
 const stages = [
   {
@@ -50,11 +44,11 @@ const faq = [
   },
   {
     q: "Можно ли учиться онлайн?",
-    a: "Да, все курсы из списка проходят онлайн, часть с практикой.",
+    a: "Многие курсы можно проходить онлайн, у каждого курса указан формат: офлайн или офлайн и онлайн.",
   },
   {
     q: "Где посмотреть стоимость?",
-    a: "Цена указана у каждого курса. Условия уточните у ассистента.",
+    a: "Цена указана у курсов, для которых она известна. Остальное уточните у ассистента.",
   },
 ];
 
@@ -80,62 +74,9 @@ export default function Home() {
           </p>
         </section>
 
-        <section className="list" id="directions" data-field-ink="dark">
-          <h2 className="head" data-reveal>
-            Пять направлений
-          </h2>
-          <ul>
-            {directions.map((d) => {
-              const n = d.courses.length;
-              return (
-                <li key={d.id} data-reveal>
-                  <a className="poster-line" href={`#${d.id}`}>
-                    <span className="name display">{d.name}</span>
-                    <span className="detail">
-                      {n} {pluralize(n, "курс", "курса", "курсов")} · от {shortestMonths(d)} мес
-                    </span>
-                  </a>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-
-        {directions.map((d) => (
-          <section
-            key={d.id}
-            id={d.id}
-            className="chapter"
-            style={{ "--field": d.field } as React.CSSProperties}
-            data-field-ink={d.ink}
-          >
-            <h2 className="display" data-reveal>
-              {d.name}
-            </h2>
-            <div className="chapter-body">
-              <p className="chapter-intro lead" data-reveal>
-                {d.intro}
-              </p>
-              <ul className="courses">
-                {d.courses.map((c) => (
-                  <li key={c.title} className="course" data-reveal>
-                    <div className="course-top">
-                      <h3>{c.title}</h3>
-                      <span className="price">{formatPrice(c.price)}</span>
-                    </div>
-                    <p>{c.description}</p>
-                    <div className="course-foot">
-                      <span className="small">
-                        {c.months} мес · {c.format}
-                      </span>
-                      <CourseAsk title={c.title} />
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </section>
-        ))}
+        <Suspense fallback={<div className="catalog-fallback" />}>
+          <Catalog />
+        </Suspense>
 
         <section className="how on-ink" id="how" data-field-ink="light">
           <div className="how-grid">
@@ -193,57 +134,11 @@ export default function Home() {
         </section>
       </main>
 
-      <footer className="footer" data-field-ink="light">
-        <p className="footer-name display" aria-label="Цифра">
-          Цифра
-        </p>
-        <div className="footer-grid">
-          <ul className="footer-places">
-            {directions.map((d) => (
-              <li key={d.id}>
-                <a href={`#${d.id}`}>{d.name}</a>
-              </li>
-            ))}
-          </ul>
-          <div className="footer-links">
-            <div>
-              <h3>Страница</h3>
-              <ul>
-                <li>
-                  <a href="#directions">Направления</a>
-                </li>
-                <li>
-                  <a href="#how">Как учимся</a>
-                </li>
-                <li>
-                  <a href="#faq">Вопросы</a>
-                </li>
-              </ul>
-            </div>
-            <div>
-              <h3>Ассистент</h3>
-              <ul>
-                <li>Отвечает по документам центра</li>
-                <li>
-                  <OpenChat>Задать вопрос</OpenChat>
-                </li>
-              </ul>
-            </div>
-          </div>
-          <p className="credits">
-            Фотографии: «Blue punch card front», public domain; «Employees in computer room plotter in use Hughes Aircraft Company», Hughes Aircraft Company, public domain; «Michael Holley Computer 1978 NWCN», Gale Sherry, public domain; «RS 42471-12 PCB 02», Mister rf,{" "}
-            <a href="https://creativecommons.org/licenses/by-sa/4.0">CC BY-SA 4.0</a>. Все через{" "}
-            <a href="https://commons.wikimedia.org">Wikimedia Commons</a>.
-          </p>
-        </div>
-        <div className="footer-last small">
-          <span>© 2026 Учебный центр «Цифра»</span>
-          <a href="#top">Наверх</a>
-        </div>
-      </footer>
+      <Suspense fallback={null}>
+        <SiteFooter />
+      </Suspense>
 
       <ChatWidget />
-      <Motion />
     </>
   );
 }
