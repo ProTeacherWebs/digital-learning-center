@@ -45,3 +45,6 @@ next-env.d.ts
 .env.local
 .taste-skill/
 !.env.example
+
+# Office lock files
+~$*
