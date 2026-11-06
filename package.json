@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@google/genai": "^2.32.0",
+    "exceljs": "^4.4.0",
+    "mammoth": "^1.13.0",
     "next": "16.4.4",
     "pdf-parse": "^2.4.5",
     "react": "19.3.0",

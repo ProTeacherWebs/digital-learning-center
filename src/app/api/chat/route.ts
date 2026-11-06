@@ -21,7 +21,7 @@ export async function POST(request: Request) {
 
   if (!process.env.GEMINI_API_KEY) {
     return json(
-      { error: "Ассистент ещё не настроен: добавьте GEMINI_API_KEY в файл .env.local." },
+      { error: "Ассистент ещё не настроен: добавьте GEMINI_API_KEY в файл .env." },
       503,
     );
   }

@@ -43,6 +43,38 @@ async function readPdf(file: string): Promise<string> {
   }
 }
 
+async function readDocx(file: string): Promise<string> {
+  const mammoth = (await import("mammoth")).default;
+  return (await mammoth.extractRawText({ path: file })).value;
+}
+
+/** One line per row, "column: value", so a retrieved chunk stays readable without its header row. */
+async function readXlsx(file: string): Promise<string> {
+  const ExcelJS = (await import("exceljs")).default;
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(file);
+  const lines: string[] = [];
+  workbook.eachSheet((sheet) => {
+    const headers: string[] = [];
+    sheet.getRow(1).eachCell((cell, col) => (headers[col] = cell.text));
+    sheet.eachRow((row, rowNumber) => {
+      if (rowNumber === 1) return;
+      const cells: string[] = [];
+      row.eachCell((cell, col) => {
+        if (cell.text) cells.push(`${headers[col] ?? `Колонка ${col}`}: ${cell.text}`);
+      });
+      if (cells.length) lines.push(`Лист «${sheet.name}». ${cells.join("; ")}`);
+    });
+  });
+  return lines.join("\n");
+}
+
+const BINARY_READERS: Record<string, (file: string) => Promise<string>> = {
+  ".pdf": readPdf,
+  ".docx": readDocx,
+  ".xlsx": readXlsx,
+};
+
 export class LocalFolderSource implements DocumentSource {
   readonly name = "local-folder";
 
@@ -53,11 +85,12 @@ export class LocalFolderSource implements DocumentSource {
     for await (const file of walk(this.root)) {
       const ext = path.extname(file).toLowerCase();
       const isText = TEXT_EXTENSIONS.has(ext);
-      if (!isText && ext !== ".pdf") continue;
+      const readBinary = BINARY_READERS[ext];
+      if (!isText && !readBinary) continue;
       if (path.basename(file).toLowerCase() === "readme.md") continue;
 
       const stat = await fs.stat(file);
-      const text = isText ? await fs.readFile(file, "utf8") : await readPdf(file);
+      const text = isText ? await fs.readFile(file, "utf8") : await readBinary(file);
       const id = path.relative(this.root, file).split(path.sep).join("/");
       docs.push({
         id,

@@ -74,5 +74,5 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - Запуск: `npm run dev` (http://localhost:3000), проверка сборки: `npm run build`.
 - Дизайн: skill `.claude/skills/taste-skill` (колористика «colour chapters», шрифт Inter вместо Libre Franklin из-за кириллицы). Проверки: `node .claude/skills/taste-skill/scripts/lint.mjs src`, `inspect.mjs <url>` на production-сборке.
 - Курсы и цены (заглушки): `src/data/courses.ts`.
-- RAG: документы лежат в `knowledge/` (.md, .txt, .pdf). `src/lib/rag/source.ts` описывает интерфейс `DocumentSource` (сейчас `LocalFolderSource`, дальше сюда добавится Google Drive), `src/lib/rag/index.ts` режет на чанки, строит эмбеддинги Gemini и ищет; индекс кешируется в `.rag-index.json`.
-- API ассистента: `src/app/api/chat/route.ts`. Нужен `GEMINI_API_KEY` в `.env.local` (пример: `.env.example`).
+- RAG: документы лежат в `knowledge/` (.md, .txt, .pdf, .docx, .xlsx). `src/lib/rag/source.ts` описывает интерфейс `DocumentSource` (сейчас `LocalFolderSource`, дальше сюда добавится Google Drive), `src/lib/rag/index.ts` режет на чанки, строит эмбеддинги Gemini и ищет; индекс кешируется в `.rag-index.json`.
+- API ассистента: `src/app/api/chat/route.ts`. Нужен `GEMINI_API_KEY` в `.env` (пример: `.env.example`).
