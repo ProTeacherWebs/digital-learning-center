@@ -1,23 +1,18 @@
 import { createHash } from "node:crypto";
-import { promises as fs } from "node:fs";
-import path from "node:path";
 import { GoogleGenAI } from "@google/genai";
+import { waitUntil } from "@vercel/functions";
 import { knowledge } from "../knowledge";
+import { indexStore, type IndexChunk } from "./store";
 
 const EMBEDDING_MODEL = "gemini-embedding-001";
 const EMBEDDING_DIMENSIONS = 768;
 const CHUNK_SIZE = 1200;
 const CHUNK_OVERLAP = 150;
 const EMBED_BATCH = 50;
-const INDEX_FILE = path.join(process.cwd(), ".rag-index.json");
+/** How often a request looks for an index saved by another process or instance. */
+const STORE_RECHECK_MS = 5_000;
 
-type Chunk = {
-  source: string;
-  title: string;
-  text: string;
-  vector: number[];
-};
-type PendingChunk = Omit<Chunk, "vector">;
+type PendingChunk = Omit<IndexChunk, "vector">;
 
 export type Hit = { source: string; title: string; text: string; score: number };
 export type SearchResult = { hits: Hit[]; indexing: boolean };
@@ -83,30 +78,42 @@ async function embed(texts: string[], taskType: string, maxRetries = 30): Promis
   }
 }
 
-async function loadStored(): Promise<Chunk[]> {
-  try {
-    return JSON.parse(await fs.readFile(INDEX_FILE, "utf8"));
-  } catch {
-    return [];
-  }
-}
-
-const save = (chunks: Chunk[]) => fs.writeFile(INDEX_FILE, JSON.stringify(chunks));
 /** A chunk is identified by its text, so an edited document only re-embeds the chunks that changed. */
 const keyOf = (c: PendingChunk) =>
   `${c.source}|${createHash("sha1").update(c.text).digest("hex")}`;
 
-let current: Chunk[] | null = null;
+let current: IndexChunk[] | null = null;
+let tag: string | undefined;
+let checkedAt = 0;
 let job: Promise<void> | null = null;
+
+async function save(chunks: IndexChunk[]) {
+  tag = await indexStore().save(chunks);
+}
+
+/** Picks up an index saved by another process or instance, at most once per STORE_RECHECK_MS. */
+async function syncFromStore() {
+  if (current && Date.now() - checkedAt < STORE_RECHECK_MS) return;
+  checkedAt = Date.now();
+  const stored = await indexStore().load(tag);
+  if (stored === "unchanged") return;
+  if (stored) {
+    current = stored.chunks;
+    tag = stored.tag;
+  } else {
+    current ??= [];
+  }
+}
 
 /** Compares the source with the stored index and embeds what is missing, saving after every batch. */
 async function reconcile() {
+  await syncFromStore();
   const docs = await knowledge().source.list();
   const wanted: PendingChunk[] = docs.flatMap((d) =>
     chunkText(d.text).map((text) => ({ source: d.id, title: d.title, text })),
   );
   const wantedKeys = new Set(wanted.map(keyOf));
-  const stored = current ?? (await loadStored());
+  const stored = current ?? [];
   const kept = stored.filter((c) => wantedKeys.has(keyOf(c)));
   const have = new Set(kept.map(keyOf));
   const pending = wanted.filter((w) => !have.has(keyOf(w)));
@@ -131,6 +138,8 @@ async function reconcile() {
     .finally(() => {
       job = null;
     });
+  // On Vercel the function would stop with the response; this keeps it alive until the batch is saved.
+  waitUntil(job);
   return pending.length;
 }
 

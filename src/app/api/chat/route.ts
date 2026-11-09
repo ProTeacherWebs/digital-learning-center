@@ -1,6 +1,9 @@
 import { GoogleGenAI } from "@google/genai";
 import { search, type Hit } from "@/lib/rag";
 
+/** Room for the first question after a deploy, which may index a few new chunks. */
+export const maxDuration = 60;
+
 const MIN_SCORE = 0.55;
 
 const SYSTEM = `Ты ассистент учебного центра «Цифра» (курсы по маркетингу, дизайну, разработке, аналитике данных и AI).
