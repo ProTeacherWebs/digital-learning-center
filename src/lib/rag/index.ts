@@ -173,7 +173,7 @@ function cosine(a: number[], b: number[]) {
 }
 
 /** Searches what is indexed so far; new or changed documents are embedded in the background. */
-export async function search(query: string, topK = 5): Promise<SearchResult> {
+export async function search(query: string, topK = 8): Promise<SearchResult> {
   await refresh();
   const chunks = current ?? [];
   if (chunks.length === 0) return { hits: [], indexing: job !== null };
