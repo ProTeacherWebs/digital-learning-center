@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { GoogleGenAI } from "@google/genai";
-import { LocalFolderSource, type DocumentSource } from "./source";
+import { knowledge } from "../knowledge";
 
 const EMBEDDING_MODEL = "gemini-embedding-001";
 const EMBEDDING_DIMENSIONS = 768;
@@ -22,11 +22,6 @@ type PendingChunk = Omit<Chunk, "vector">;
 export type Hit = { source: string; title: string; text: string; score: number };
 export type SearchResult = { hits: Hit[]; indexing: boolean };
 
-/** The knowledge source. Swap for a Google Drive source here once it exists. */
-const source: DocumentSource = new LocalFolderSource(
-  path.join(process.cwd(), "knowledge"),
-);
-
 let client: GoogleGenAI | null = null;
 function gemini() {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -34,8 +29,18 @@ function gemini() {
   return (client ??= new GoogleGenAI({ apiKey }));
 }
 
+/** Chunks of about CHUNK_SIZE characters; a form feed in the text is a hard boundary. */
 export function chunkText(text: string): string[] {
-  const clean = text.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  return text.split("\f").flatMap((segment) => {
+    const chunks = chunkSegment(segment);
+    // A section's heading names its subject; repeat it so no chunk loses track of what it is about.
+    const heading = /^# .+/.exec(segment.trim())?.[0];
+    return heading ? chunks.map((c) => (c.startsWith(heading) ? c : `${heading}\n${c}`)) : chunks;
+  });
+}
+
+function chunkSegment(segment: string): string[] {
+  const clean = segment.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
   const chunks: string[] = [];
   let start = 0;
   while (start < clean.length) {
@@ -96,7 +101,7 @@ let job: Promise<void> | null = null;
 
 /** Compares the source with the stored index and embeds what is missing, saving after every batch. */
 async function reconcile() {
-  const docs = await source.list();
+  const docs = await knowledge().source.list();
   const wanted: PendingChunk[] = docs.flatMap((d) =>
     chunkText(d.text).map((text) => ({ source: d.id, title: d.title, text })),
   );

@@ -1,8 +1,7 @@
-import { promises as fs } from "node:fs";
-import path from "node:path";
+import { knowledge } from "./knowledge";
 
 /** The workbook the site reads its courses from: sheet "Курсы" (and "Стоимость" for prices). */
-const WORKBOOK = path.join(process.cwd(), "knowledge", "proweb-ceny-i-prepodavateli.xlsx");
+const WORKBOOK = "proweb-ceny-i-prepodavateli.xlsx";
 
 export type Course = {
   title: string;
@@ -73,10 +72,10 @@ let cache: { signature: string; directions: Direction[] } | null = null;
 
 type Row = (name: string) => string;
 
-async function readWorkbook(): Promise<Direction[]> {
+async function readWorkbook(data: Buffer): Promise<Direction[]> {
   const ExcelJS = (await import("exceljs")).default;
   const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.readFile(WORKBOOK);
+  await workbook.xlsx.load(data as unknown as ArrayBuffer);
 
   const rows = (sheetName: string): Row[] => {
     const sheet = workbook.getWorksheet(sheetName);
@@ -132,10 +131,10 @@ async function readWorkbook(): Promise<Direction[]> {
 /** Directions and their courses from the workbook; re-read whenever the file changes. */
 export async function loadDirections(): Promise<Direction[]> {
   try {
-    const stat = await fs.stat(WORKBOOK);
-    const signature = `${stat.mtimeMs}-${stat.size}`;
-    if (cache?.signature !== signature) {
-      cache = { signature, directions: await readWorkbook() };
+    const file = await knowledge().file(WORKBOOK);
+    if (!file) return cache?.directions ?? [];
+    if (cache?.signature !== file.version) {
+      cache = { signature: file.version, directions: await readWorkbook(file.buffer) };
     }
     return cache.directions;
   } catch (error) {

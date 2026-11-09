@@ -7,10 +7,12 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "index": "node --env-file=.env --import tsx scripts/build-index.ts"
+    "index": "node --env-file=.env --import tsx scripts/build-index.ts",
+    "check-drive": "node --env-file=.env --import tsx scripts/check-drive.ts"
   },
   "dependencies": {
     "@google/genai": "^2.32.0",
+    "@googleapis/drive": "^27.0.0",
     "exceljs": "^4.4.0",
     "mammoth": "^1.13.0",
     "next": "16.4.4",
